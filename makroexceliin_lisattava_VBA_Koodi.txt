@@ -1,0 +1,96 @@
+' Script has been done and tested only on SAP logon 770
+' VBA Macro for Changing initial Passwords in SAP tcode SU01 for X - number of users in xlsx file
+' This script has been tested only on CUA. Make sure to have open only 1 instance of CUA active
+' Make sure that the instance of CUA is located on the initial window of SAP when logged into (SAP Easy Access Menu)
+' If user has multiple systems in CUA this script will add password for all of those systems as initial password.
+' Ensure SAP GUI scripting is enabled before running this macro
+' When running the script this will throw a box on the screen saying that SAP script is being activated -> press OK.
+' Make sure you have updated the path where new users and passwords are set here on Line 24 on this script
+' Check if SAP GUI scripting is active
+' You may modify this script to go faster by changing the delays in ChangePasswordInSAP
+' Error handling for users that are non existent is active, this displays a box during script that needs to be checked okay, and then script continues.
+
+Sub ChangePasswords()
+
+    Dim xlApp As Object, xlWb As Object, xlWs As Object
+    Dim LastRow As Integer, i As Integer
+    Dim UserName As String, Password As String
+    Dim SapGuiAuto, application, connection, session
+
+    ' Open Excel and get the workbook/worksheet
+    ' Tähän täytyy asettaa se polku mihin excel tiedosti viittaa, aina uudet käyttäjät / salasanat vaihdetaan siihen exceliin. Tässä Makro tiedostossa ei tarvitse olla mitään muuta kuin tämä visual basic skripti.
+    Set xlApp = CreateObject("Excel.Application")
+    Set xlWb = xlApp.Workbooks.Open("C:\test\test.xlsx")
+    Set xlWs = xlWb.Worksheets(1)
+
+    ' Find the last row with data
+    LastRow = xlWs.Cells(xlWs.Rows.Count, "A").End(-4162).Row
+
+    ' Initialize SAP scripting engine
+    Set SapGuiAuto = GetObject("SAPGUI")
+    Set application = SapGuiAuto.GetScriptingEngine
+    Set connection = application.Children(0)
+    Set session = connection.Children(0)
+
+    ' Loop through all rows in Excel and change password in SAP
+    For i = 1 To LastRow
+        UserName = xlWs.Cells(i, 1).Value
+        Password = xlWs.Cells(i, 2).Value
+        ChangePasswordInSAP UserName, Password, session
+    Next i
+
+    ' Close Excel and cleanup
+    xlWb.Close SaveChanges:=False
+    Set xlWs = Nothing
+    Set xlWb = Nothing
+    xlApp.Quit
+    Set xlApp = Nothing
+    
+    ' Display message to user
+    MsgBox "Passwords have been assigned to all IDs. Please proceed with sending passwords to users.", vbInformation, "Process Completed"
+
+End Sub
+
+Sub ChangePasswordInSAP(UserName As String, Password As String, ByRef session)
+
+    On Error GoTo ErrHandler
+    Debug.Print "Attempting to change password for user: " & UserName & " to " & Password
+    
+    ' Navigate to the password change screen
+    session.findById("wnd[0]").resizeWorkingPane 120, 43, False
+    session.findById("wnd[0]/tbar[0]/okcd").Text = "su01"
+    session.findById("wnd[0]").sendVKey 0
+    Debug.Print "Entered transaction code SU01"
+    application.Wait Now + TimeValue("00:00:02") '  delay asetettu koska SAP saattaa hidastella ja skripti menee liian nopeasti
+    
+    Debug.Print "Entering user name: " & UserName
+    session.findById("wnd[0]/usr/ctxtSUID_ST_BNAME-BNAME").Text = UserName
+    session.findById("wnd[0]/usr/ctxtSUID_ST_BNAME-BNAME").caretPosition = Len(UserName)
+    session.findById("wnd[0]/tbar[1]/btn[20]").press
+    Debug.Print "Pressed enter after entering user name"
+    application.Wait Now + TimeValue("00:00:02") '  delay asetettu koska SAP saattaa hidastella ja skripti menee liian nopeasti
+
+    ' Interact with additional UI elements
+    session.findById("wnd[1]/usr/subPOPUP:SAPLSUID_MAINTENANCE:2101/cntlG_CUA_SYSTEMS_CONTAINER1/shellcont/shell").setCurrentCell -1, ""
+    session.findById("wnd[1]/usr/subPOPUP:SAPLSUID_MAINTENANCE:2101/cntlG_CUA_SYSTEMS_CONTAINER1/shellcont/shell").selectColumn "SUBSYSTEM"
+    session.findById("wnd[1]/usr/subPOPUP:SAPLSUID_MAINTENANCE:2101/cntlG_CUA_SYSTEMS_CONTAINER1/shellcont/shell").selectColumn "SYSTEMTEXT"
+    session.findById("wnd[1]/usr/subPOPUP:SAPLSUID_MAINTENANCE:2101/cntlG_CUA_SYSTEMS_CONTAINER1/shellcont/shell").selectedRows = "0"
+    application.Wait Now + TimeValue("00:00:02") '  delay asetettu koska SAP saattaa hidastella ja skripti menee liian nopeasti
+
+    ' Enter and confirm the new password
+    Debug.Print "Entering new password"
+    session.findById("wnd[1]/usr/subPOPUP:SAPLSUID_MAINTENANCE:2101/pwdSUID_ST_NODE_PASSWORD_EXT-PASSWORD").Text = Password
+    session.findById("wnd[1]/usr/subPOPUP:SAPLSUID_MAINTENANCE:2101/pwdSUID_ST_NODE_PASSWORD_EXT-PASSWORD2").Text = Password
+    session.findById("wnd[1]/usr/subPOPUP:SAPLSUID_MAINTENANCE:2101/pwdSUID_ST_NODE_PASSWORD_EXT-PASSWORD2").SetFocus
+    session.findById("wnd[1]/usr/subPOPUP:SAPLSUID_MAINTENANCE:2101/pwdSUID_ST_NODE_PASSWORD_EXT-PASSWORD2").caretPosition = Len(Password)
+    session.findById("wnd[1]/tbar[0]/btn[0]").press
+    Debug.Print "Password changed for user: " & UserName
+    
+    ' Close the password change screen and return to initial state
+    session.findById("wnd[0]/tbar[0]/btn[3]").press
+    Debug.Print "Returned to initial screen"
+    Exit Sub
+
+ErrHandler:
+    MsgBox "Error occurred while changing password for user " & UserName & ": " & Err.Description, vbCritical
+End Sub
